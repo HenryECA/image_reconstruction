@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 def validate(model, dataloader, device, criterion):
     """
@@ -15,6 +16,8 @@ def validate(model, dataloader, device, criterion):
             targets = targets.to(device)
 
             outputs = model(inputs)
+            if outputs.shape != targets.shape:
+                outputs = F.interpolate(outputs, size=targets.shape[2:], mode='bilinear', align_corners=False)
             loss = criterion(outputs, targets)
 
             batch_size = inputs.size(0)
