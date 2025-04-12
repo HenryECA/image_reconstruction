@@ -1,5 +1,7 @@
 # Own -> data and models folder 
-data/
+data/train/
+data/val/
+data/annotations_trainval2017/
 models/
 
 # Byte-compiled / optimized / DLL files
