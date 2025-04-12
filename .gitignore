@@ -1,4 +1,6 @@
 # Own -> data and models folder 
+data/train2/
+data/val2/
 data/train/
 data/val/
 data/annotations_trainval2017/

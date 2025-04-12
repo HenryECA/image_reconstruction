@@ -1,11 +1,11 @@
-import kagglehub
-from kagglehub import KaggleDatasetAdapter
 from torchvision import transforms
 from torch.utils.data import Dataset
 from PIL import Image
 import os
+from datasets import load_dataset as load_dataset
+import tqdm
 
-TEST = True
+TEST = False
 TRAIN_PATH = "train" if not TEST else "train_test"
 VAL_PATH = "val" if not TEST else "val_test"
 
@@ -37,34 +37,48 @@ class CocoHumanRGBDataset(Dataset):
         return input_image, target_image
     
 
-def download_dataset(dataset_id, path):
+def download_dataset(data_path: str, val_size: float = 0.2):
     """
     Download the dataset from Hugging Face Hub.
     """
-    # TODO: Check how to use Kaggle
-    dataset = kagglehub.load_dataset(
-        KaggleDatasetAdapter.HUGGING_FACE,
-        "yanplayz08/coco-subset-for-pose-estimation",
-        path,
-        )
+    # If the dataset is not split into train and val, split it
+
+    os.makedirs(os.path.join(data_path, "train"), exist_ok=True)
+    os.makedirs(os.path.join(data_path, "val"), exist_ok=True)
+
+    # Load dataset
+    ds = load_dataset("UCSC-VLAA/Recap-COCO-30K")
+    dataset = ds["train"].train_test_split(test_size=val_size)
+
+    def download_images(split_name, split_dataset):
+        for item in tqdm.tqdm(split_dataset, desc=f"Downloading {split_name} images"):
+            image_id = item['image_id']
+            image = item['image']
+
+            image_path = os.path.join(data_path, split_name, f"{image_id}.jpg")
+
+            image.save(image_path, format='JPEG')
+
+    download_images("train", dataset["train"])
+    download_images("val", dataset["test"])
     
     return dataset
     
     
-def load_dataset(path, size=(256, 256)):
+def get_dataset(path, image_size=(256, 256), val_size=0.2):
     """
     Load the dataset from the specified path.
     """
     # If the data/train and data/val are not available, download the dataset
     if not os.path.exists(os.path.join(path, "train")) or not os.path.exists(os.path.join(path, "val")):    
-        download_dataset("yanplayz08/coco-subset-for-pose-estimation", path)
+        download_dataset(path, val_size=val_size)
     # Load the dataset
     train_dataset = CocoHumanRGBDataset(
         image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
-        size=size,
+        size=image_size,
     )
     val_dataset = CocoHumanRGBDataset(
         image_paths=[os.path.join(path, VAL_PATH,f) for f in os.listdir(os.path.join(path, VAL_PATH))],
-        size=size,
+        size=image_size,
     )
     return train_dataset, val_dataset
