@@ -1,0 +1,1 @@
+{"size": [256, 256], "output_classes": 313, "optimizer": "sgd", "learning_rate": 0.001, "momentum": 0.9, "batch_size": 64, "epochs": 2, "num_workers": 4, "scheduler": "StepLR", "scheduler_step_size": 2, "scheduler_gamma": 0.1}

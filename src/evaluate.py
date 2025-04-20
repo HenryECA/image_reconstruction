@@ -26,3 +26,34 @@ def validate(model, dataloader, device, criterion):
 
     return total_loss / total_samples
 
+
+def validate_zhang(model, dataloader, device, criterion):
+    """
+    Evaluate the model on the validation set for Zhang-style colorization.
+    - Inputs: grayscale (B, 1, H, W)
+    - Targets: class indices (B, H, W)
+    - Outputs: logits (B, 313, h, w)
+    Returns average loss per sample.
+    """
+    model.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    with torch.no_grad():
+        for inputs, targets in dataloader:
+            inputs = inputs.to(device)               # (B, 1, H, W)
+            targets = targets.to(device).long()      # (B, H, W)
+
+            outputs = model(inputs)                  # (B, 313, h, w)
+
+            # Resize targets to match model output shape
+            if outputs.shape[2:] != targets.shape[1:]:
+                targets = F.interpolate(targets.unsqueeze(1).float(), size=outputs.shape[2:], mode='nearest').squeeze(1).long()
+
+            loss = criterion(outputs, targets)
+
+            batch_size = inputs.size(0)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
+
+    return total_loss / total_samples

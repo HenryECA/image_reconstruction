@@ -1,11 +1,16 @@
 from torchvision import transforms
 from torch.utils.data import Dataset
+import torch
 from PIL import Image
+from skimage.color import rgb2lab, lab2rgb
 import os
 from datasets import load_dataset as load_dataset
 import tqdm
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
 
-TEST = False
+TEST = True
 TRAIN_PATH = "train" if not TEST else "train_test"
 VAL_PATH = "val" if not TEST else "val_test"
 
@@ -35,7 +40,101 @@ class CocoHumanRGBDataset(Dataset):
         target_image = self.target_transform(image)
         
         return input_image, target_image
-    
+
+
+from torch.utils.data import Dataset
+from torchvision import transforms
+from sklearn.neighbors import NearestNeighbors
+from skimage.color import rgb2lab
+import numpy as np
+import torch
+from PIL import Image
+import os
+import tqdm
+from sklearn.cluster import KMeans
+
+class CocoHumanCIELabDataset(Dataset):
+    def __init__(self, image_paths, size=(256, 256), pts_file="pts_in_hull.npy"):
+        self.image_paths = image_paths
+        self.size = size
+        self.pts_file = pts_file
+
+        # Input: grayscale
+        self.input_transform = transforms.Compose([
+            transforms.Resize(self.size),
+            transforms.Grayscale(num_output_channels=1),
+            transforms.ToTensor(),  # Output: (1, H, W) in [0, 1]
+        ])
+
+        # Resize before Lab conversion
+        self.rgb_transform = transforms.Compose([
+            transforms.Resize(self.size)
+        ])
+
+        # Load or create pts_in_hull and nearest neighbor model
+        self.get_pts_in_hull(self.pts_file)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        image_path = self.image_paths[idx]
+        image = Image.open(image_path).convert("RGB")
+
+        # Input: grayscale version
+        input_image = self.input_transform(image)  # (1, H, W)
+
+        # Convert resized RGB to Lab for ab target
+        resized_image = self.rgb_transform(image)
+        lab = rgb2lab(np.array(resized_image))
+        ab = lab[:, :, 1:3]  # (H, W, 2)
+
+        # Encode ab into bin indices (0–312)
+        label_map = self.encode_ab(ab)  # (H, W)
+        target_tensor = torch.from_numpy(label_map).long()  # required for CrossEntropyLoss
+
+        return input_image, target_tensor
+
+    def create_pts_in_hull(self, n_bins=313, name="pts_in_hull", subsample=None):
+        if subsample is not None:
+            image_paths = self.image_paths[:subsample]
+        else:
+            image_paths = self.image_paths
+
+        pts_in_hull = []
+        for image_path in tqdm.tqdm(image_paths, desc="Creating pts_in_hull"):
+            image = Image.open(image_path).convert("RGB")
+            image = self.rgb_transform(image)
+            lab = rgb2lab(np.array(image))
+            ab = lab[:, :, 1:3].reshape(-1, 2)
+            pts_in_hull.append(ab)
+
+        pts_in_hull = np.vstack(pts_in_hull)
+        kmeans = KMeans(n_clusters=n_bins, random_state=42, verbose=1)
+        kmeans.fit(pts_in_hull)
+        self.pts_in_hull = kmeans.cluster_centers_
+        np.save(name + ".npy", self.pts_in_hull)
+        return self.pts_in_hull
+
+    def get_pts_in_hull(self, name="pts_in_hull"):
+        if os.path.exists(name):
+            self.pts_in_hull = np.load(name)
+        elif os.path.exists(name + ".npy"):
+            self.pts_in_hull = np.load(name + ".npy")
+        else:
+            self.pts_in_hull = self.create_pts_in_hull(name=name)
+
+        self.neigh = NearestNeighbors(n_neighbors=1)
+        self.neigh.fit(self.pts_in_hull)
+        return self.pts_in_hull
+
+    def encode_ab(self, ab):
+        h, w, _ = ab.shape
+        ab_flat = ab.reshape(-1, 2)
+        _, indices = self.neigh.kneighbors(ab_flat)
+        indices = indices.reshape(h, w)
+        return indices
+
 
 def download_dataset(data_path: str, val_size: float = 0.2):
     """
@@ -65,7 +164,7 @@ def download_dataset(data_path: str, val_size: float = 0.2):
     return dataset
     
     
-def get_dataset(path, image_size=(256, 256), val_size=0.2):
+def get_dataset(path, image_size=(256, 256), val_size=0.2, type="RGB"):
     """
     Load the dataset from the specified path.
     """
@@ -73,12 +172,22 @@ def get_dataset(path, image_size=(256, 256), val_size=0.2):
     if not os.path.exists(os.path.join(path, "train")) or not os.path.exists(os.path.join(path, "val")):    
         download_dataset(path, val_size=val_size)
     # Load the dataset
-    train_dataset = CocoHumanRGBDataset(
-        image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
-        size=image_size,
-    )
-    val_dataset = CocoHumanRGBDataset(
-        image_paths=[os.path.join(path, VAL_PATH,f) for f in os.listdir(os.path.join(path, VAL_PATH))],
-        size=image_size,
-    )
+    if type == "CIELab":
+        train_dataset = CocoHumanCIELabDataset(
+            image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
+            size=image_size,
+        )
+        val_dataset = CocoHumanCIELabDataset(
+            image_paths=[os.path.join(path, VAL_PATH,f) for f in os.listdir(os.path.join(path, VAL_PATH))],
+            size=image_size,
+        )
+    else:
+        train_dataset = CocoHumanRGBDataset(
+            image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
+            size=image_size,
+        )
+        val_dataset = CocoHumanRGBDataset(
+            image_paths=[os.path.join(path, VAL_PATH,f) for f in os.listdir(os.path.join(path, VAL_PATH))],
+            size=image_size,
+        )
     return train_dataset, val_dataset

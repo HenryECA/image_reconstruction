@@ -3,8 +3,9 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import os
+import json
 
-def show_image(original, pred):
+def show_image(original, pred, save_path=None):
     """
     Show the original, grayscale, and predicted images.
     """
@@ -20,8 +21,13 @@ def show_image(original, pred):
     ax[1].axis("off")
 
     plt.show()
+
+    if save_path:
+        plt.savefig(os.path.join(save_path))
+        print(f"Prediction saved at {save_path}")
+
     
-def save_model(model, path, name):
+def save_model(model, path, name, parameters=None):
     """
     Save the model to the specified path.
     """
@@ -30,9 +36,16 @@ def save_model(model, path, name):
 
     torch.save(model.state_dict(), f"{path}/{name}.pth")
     print(f"Model saved at {path}/{name}.pth")
+
+    # Save a json file with the model parameters
+    if parameters is not None:
+        with open(f"{path}/{name}_params.json", "w") as f:
+            json.dump(parameters, f)
+        print(f"Model parameters saved at {path}/{name}_params.json")
+
     
 
-def load_model(model, path, name):
+def load_model(model, path, name, parameters=False):
     """
     Load the model from the specified path.
     """
@@ -41,7 +54,13 @@ def load_model(model, path, name):
 
     model.load_state_dict(torch.load(f"{path}/{name}.pth"))
 
-    return model
+    if parameters:
+        with open(f"{path}/{name}_params.json", "r") as f:
+            params = json.load(f)
+        print(f"Model parameters loaded from {path}/{name}_params.json")
+        return model, params
+
+    return model, None
 
 
 def seed_all(seed: int = 42):
