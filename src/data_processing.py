@@ -7,10 +7,11 @@ import os
 from datasets import load_dataset as load_dataset
 import tqdm
 import numpy as np
-from sklearn.cluster import KMeans
+from sklearn.cluster import MiniBatchKMeans
 from sklearn.neighbors import NearestNeighbors
+import copy
 
-TEST = True
+TEST = False
 TRAIN_PATH = "train" if not TEST else "train_test"
 VAL_PATH = "val" if not TEST else "val_test"
 
@@ -42,19 +43,9 @@ class CocoHumanRGBDataset(Dataset):
         return input_image, target_image
 
 
-from torch.utils.data import Dataset
-from torchvision import transforms
-from sklearn.neighbors import NearestNeighbors
-from skimage.color import rgb2lab
-import numpy as np
-import torch
-from PIL import Image
-import os
-import tqdm
-from sklearn.cluster import KMeans
 
 class CocoHumanCIELabDataset(Dataset):
-    def __init__(self, image_paths, size=(256, 256), pts_file="pts_in_hull.npy"):
+    def __init__(self, image_paths, size=(256, 256), pts_file="pts_in_hull.npy", train=True):
         self.image_paths = image_paths
         self.size = size
         self.pts_file = pts_file
@@ -100,20 +91,28 @@ class CocoHumanCIELabDataset(Dataset):
             image_paths = self.image_paths[:subsample]
         else:
             image_paths = self.image_paths
+        
+        sample_size=1000
+        batch_size = 2048
+        max_images = 10000
+        kmeans = MiniBatchKMeans(n_clusters=n_bins, random_state=42, batch_size=batch_size, verbose=1)
 
-        pts_in_hull = []
-        for image_path in tqdm.tqdm(image_paths, desc="Creating pts_in_hull"):
+        for i, image_path in enumerate(tqdm.tqdm(image_paths, desc="Fitting MiniBatchKMeans")):
+            if max_images and i >= max_images:
+                break
+
             image = Image.open(image_path).convert("RGB")
-            image = self.rgb_transform(image)
-            lab = rgb2lab(np.array(image))
+            image = self.rgb_transform(image)  # Make sure this resizes to 256x256 or lower
+            lab = rgb2lab(np.array(image)).astype(np.float32)
             ab = lab[:, :, 1:3].reshape(-1, 2)
-            pts_in_hull.append(ab)
 
-        pts_in_hull = np.vstack(pts_in_hull)
-        kmeans = KMeans(n_clusters=n_bins, random_state=42, verbose=1)
-        kmeans.fit(pts_in_hull)
+            if len(ab) < sample_size:
+                continue  # avoid crashing on small/corrupt images
+            indices = np.random.choice(len(ab), size=sample_size, replace=False)
+            kmeans.partial_fit(ab[indices])
+
         self.pts_in_hull = kmeans.cluster_centers_
-        np.save(name + ".npy", self.pts_in_hull)
+        np.save(name, self.pts_in_hull)
         return self.pts_in_hull
 
     def get_pts_in_hull(self, name="pts_in_hull"):
@@ -173,14 +172,18 @@ def get_dataset(path, image_size=(256, 256), val_size=0.2, type="RGB"):
         download_dataset(path, val_size=val_size)
     # Load the dataset
     if type == "CIELab":
+        all_image_paths = [os.path.join(path, TRAIN_PATH, f) for f in os.listdir(os.path.join(path, TRAIN_PATH))]
+        all_image_paths += [os.path.join(path, VAL_PATH, f) for f in os.listdir(os.path.join(path, VAL_PATH))]
+
+        # Create the full dataset once (no train/test distinction here)
         train_dataset = CocoHumanCIELabDataset(
-            image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
+            image_paths=all_image_paths,
             size=image_size,
+            train=False  # or `train=True`, doesn't matter now
         )
-        val_dataset = CocoHumanCIELabDataset(
-            image_paths=[os.path.join(path, VAL_PATH,f) for f in os.listdir(os.path.join(path, VAL_PATH))],
-            size=image_size,
-        )
+        val_dataset = copy.deepcopy(train_dataset)
+        train_dataset.image_paths = [os.path.join(path, TRAIN_PATH, f) for f in os.listdir(os.path.join(path, TRAIN_PATH))]
+        val_dataset.image_paths = [os.path.join(path, VAL_PATH, f) for f in os.listdir(os.path.join(path, VAL_PATH))]
     else:
         train_dataset = CocoHumanRGBDataset(
             image_paths=[os.path.join(path, TRAIN_PATH,f) for f in os.listdir(os.path.join(path, TRAIN_PATH))],
