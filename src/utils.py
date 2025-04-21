@@ -20,11 +20,11 @@ def show_image(original, pred, save_path=None):
     ax[1].set_title("Predicted Image")
     ax[1].axis("off")
 
-    plt.show()
-
     if save_path:
         plt.savefig(os.path.join(save_path))
         print(f"Prediction saved at {save_path}")
+
+    plt.show()
 
     
 def save_model(model, path, name, parameters=None):
