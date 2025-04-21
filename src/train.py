@@ -3,10 +3,13 @@ import time
 from tqdm import tqdm
 import torch.nn.functional as F
 from src.zhang_model import ZhangColorizationNet
+from src.perceptual_loss import PerceptualLoss
+from src.utils import normalize_for_vgg
 
-def train_step(model, optimizer, criterion, dataloader, device):
+def train_step(model, optimizer, l1_criterion, perceptual_criterion, dataloader, device, lambda_val=0.0):
     """
-    Perform a single training step (epoch), with tqdm showing progress per batch.
+    Perform a single training step (epoch).
+    If λ > 0 and perceptual_criterion is provided, combine L1 and perceptual loss.
     """
     model.train()
     total_loss = 0.0
@@ -23,7 +26,14 @@ def train_step(model, optimizer, criterion, dataloader, device):
         if outputs.shape != targets.shape:
             outputs = F.interpolate(outputs, size=targets.shape[2:], mode='bilinear', align_corners=False)
 
-        loss = criterion(outputs, targets)
+        l1_loss = l1_criterion(outputs, targets)
+
+        if lambda_val > 0 and perceptual_criterion is not None:
+            perceptual_loss = perceptual_criterion(normalize_for_vgg(outputs), normalize_for_vgg(targets))
+            loss = l1_loss + lambda_val * perceptual_loss
+        else:
+            loss = l1_loss
+
         loss.backward()
         optimizer.step()
 
@@ -35,8 +45,6 @@ def train_step(model, optimizer, criterion, dataloader, device):
 
     return total_loss / total_samples
 
-import torch.nn.functional as F
-from tqdm import tqdm
 
 def train_step_zhang(model, optimizer, criterion, dataloader, device):
     """
@@ -76,9 +84,14 @@ def train_step_zhang(model, optimizer, criterion, dataloader, device):
 
 
 
-def train(model, train_dataloader, val_dataloader, optimizer, criterion, num_epochs, scheduler=None, device=None):
+def train(model, train_dataloader, val_dataloader, optimizer, criterion, num_epochs, lambda_val=None, scheduler=None, device=None):
     train_history = []
     val_history = []
+
+    if lambda_val is not None and lambda_val > 0:
+        perceptual_criterion = PerceptualLoss().to(device)
+    else:
+        perceptual_criterion = None
 
     for epoch in range(num_epochs):
         t_0 = time.time()
@@ -87,8 +100,8 @@ def train(model, train_dataloader, val_dataloader, optimizer, criterion, num_epo
             train_loss = train_step_zhang(model, optimizer, criterion, train_dataloader, device)
             val_loss = validate_zhang(model, val_dataloader, device, criterion)
         else:
-            train_loss = train_step(model, optimizer, criterion, train_dataloader, device)
-            val_loss = validate(model, val_dataloader, device, criterion)
+            train_loss = train_step(model, optimizer, criterion, perceptual_criterion, train_dataloader, device, lambda_val)
+            val_loss = validate(model, val_dataloader, device, criterion, perceptual_criterion, lambda_val)
 
         train_history.append(train_loss)
         val_history.append(val_loss)

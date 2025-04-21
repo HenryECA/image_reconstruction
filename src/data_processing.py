@@ -11,7 +11,7 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.neighbors import NearestNeighbors
 import copy
 
-TEST = False
+TEST = True
 TRAIN_PATH = "train" if not TEST else "train_test"
 VAL_PATH = "val" if not TEST else "val_test"
 
